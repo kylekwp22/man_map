@@ -11,7 +11,7 @@ int main()
 	{
 
 		DWORD Err = GetLastError();
-		printf("CreateTollHep32Snapshot failed: 0x%X\n");
+		printf("CreateTollHep32Snapshot failed: 0x%X\n",Err);
 		system("PAUSE");
 		return 0;
 	}
@@ -32,7 +32,7 @@ int main()
 	HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS,FALSE,PID);
 	if (!hProc) {
 		DWORD Err = GetLastError();
-		printf("OpenProcess failed: 0x%X\n");
+		printf("OpenProcess failed: 0x%X\n",Err);
 		system("PAUSE");
 		return 0;
 	}

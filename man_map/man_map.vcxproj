@@ -130,11 +130,20 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="globals.cpp" />
     <ClCompile Include="injection.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="PhysicalMemory.cpp" />
+    <ClCompile Include="Superfetch.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="globals.h" />
     <ClInclude Include="injection.h" />
+    <ClInclude Include="peb64.h" />
+    <ClInclude Include="PhysicalMemory.h" />
+    <ClInclude Include="PMemHelper.h" />
+    <ClInclude Include="Superfetch.h" />
+    <ClInclude Include="SuperfetchNative.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

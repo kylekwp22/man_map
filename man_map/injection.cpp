@@ -1,4 +1,5 @@
 #include "injection.h"
+#include "PMemHelper.h"
 
 void __stdcall Shellcode(MANUAL_MAPPING_DATA* pData);
 
@@ -7,33 +8,37 @@ void __stdcall Shellcode(MANUAL_MAPPING_DATA* pData);
 bool ManualMap(HANDLE hProc, const char* szDllFile) 
 {
 	BYTE *				pSrcData = nullptr;
-	IMAGE_NT_HEADERS *	pOldNtHeader = nullptr;
+	PIMAGE_NT_HEADERS 	pOldNtHeader = nullptr;
 	IMAGE_OPTIONAL_HEADER * pOldOptHeader = nullptr;
 	IMAGE_FILE_HEADER * pOldFileHeader = nullptr;
 	BYTE *				pTargetBase = nullptr;
 
+	PMemHelper *mem = new PMemHelper();
+
 	DWORD dwCheck = 0;
-	if (!GetFileAttributesA(szDllFile))
+	if (GetFileAttributesA(szDllFile) == INVALID_FILE_ATTRIBUTES)
 	{
 		printf("File doesn't exist\n");
 		return false;
 	}
 
-	std::ifstream File(szDllFile, std::ios::binary || std::ios::ate);
+	std::ifstream File(szDllFile, std::ifstream::ate | std::ifstream::binary);
 
 	if (File.fail())
 	{
 		printf("Opening the file failed: %X\n", (DWORD)File.rdstate());
 		return false;
 	}
-
+	//File.seekg(0, std::ios::end);
 	auto FileSize = File.tellg();
+	//File.seekg(0, std::ios::beg);
 	if (FileSize < 0x1000)
 	{
 		printf("File size is invalid. \n");
 		File.close();
 		return false;
 	}
+	printf("File Size: %x\n", FileSize);
 
 
 	pSrcData = new BYTE[static_cast<UINT_PTR>(FileSize)];
@@ -48,21 +53,25 @@ bool ManualMap(HANDLE hProc, const char* szDllFile)
 	File.read(reinterpret_cast<char*>(pSrcData),FileSize);
 	File.close();
 
-	if (reinterpret_cast<IMAGE_DOS_HEADER*>(pSrcData)->e_magic != 0x5A4D) //"MZ"
+	if (reinterpret_cast<PIMAGE_DOS_HEADER>(pSrcData)->e_magic != 0x5A4D) //"MZ"
 	{
 		printf("Invalid file\n");
 		delete[] pSrcData;
 		return false;
 	}
 
-	pOldNtHeader = reinterpret_cast<IMAGE_NT_HEADERS*>(pSrcData + reinterpret_cast<IMAGE_DOS_HEADER*>(pSrcData)->e_lfanew);
-	pOldOptHeader = &pOldNtHeader->OptionalHeader;
-	pOldFileHeader = &pOldNtHeader->FileHeader;
+	pOldNtHeader = reinterpret_cast<PIMAGE_NT_HEADERS>(pSrcData + reinterpret_cast<PIMAGE_DOS_HEADER>(pSrcData)->e_lfanew);
+	pOldOptHeader = &(pOldNtHeader->OptionalHeader);
+	pOldFileHeader = &(pOldNtHeader->FileHeader);
+
+	printf("magic 0x%X \n", reinterpret_cast<IMAGE_DOS_HEADER*>(pSrcData)->e_magic);
+	printf("signature: 0x%X \n", reinterpret_cast<PIMAGE_NT_HEADERS>(pOldNtHeader)->Signature);
 
 #ifdef _WIN64
 	if (pOldFileHeader->Machine != IMAGE_FILE_MACHINE_AMD64)
 	{
-		printf("invalid platform\n");
+		
+		printf("invalid platform : 0x%x \n", pOldFileHeader->Machine);
 		delete[] pSrcData;
 		return false;
 	}
@@ -87,29 +96,36 @@ bool ManualMap(HANDLE hProc, const char* szDllFile)
 		}
 	}
 
+	printf("pTargetBase 0x%X\n", pTargetBase );
+	printf("pTargetBase Size 0x%X\n", pOldOptHeader->SizeOfImage);
 	MANUAL_MAPPING_DATA data{ 0 };
 	data.pLoadLibraryA = LoadLibraryA;
 	data.pGetProcAddress = reinterpret_cast<f_GetProcAddress>(GetProcAddress);
 
 	auto* pSectionHeader = IMAGE_FIRST_SECTION(pOldNtHeader);
+	printf("num of Sections 0x%X\n", pOldFileHeader->NumberOfSections);
 	for (UINT i = 0; i != pOldFileHeader->NumberOfSections; ++i, ++pSectionHeader)
 	{
 		if (pSectionHeader->SizeOfRawData)
 		{
-			if (!WriteProcessMemory(hProc, pTargetBase + pSectionHeader->VirtualAddress, pSrcData + pSectionHeader->PointerToRawData, pSectionHeader->SizeOfRawData, nullptr))
+			if (!mem->WriteVirtual(cr3, reinterpret_cast<uint64_t>(pTargetBase + pSectionHeader->VirtualAddress), pSrcData + pSectionHeader->PointerToRawData, pSectionHeader->SizeOfRawData ))
 			{
-				printf("Can't map sections: 0x%x\n", GetLastError());
-				delete[] pSrcData;
-				VirtualFreeEx(hProc, pTargetBase, 0, MEM_RELEASE);
-				return false;
+				printf("pTargetBase 0x%X\n", pTargetBase+ pSectionHeader->VirtualAddress);
+				//printf("Can't map sections: 0x%x\n", GetLastError()); //487 (0x1E7) 	Attempt to access invalid address.
+			
+				//delete[] pSrcData;
+				//VirtualFreeEx(hProc, pTargetBase, 0, MEM_RELEASE);
+				//return false;
 			}
 		}
 	}
 
 	memcpy(pSrcData, &data, sizeof(data));
-	WriteProcessMemory(hProc, pTargetBase, pSrcData, 0x1000, nullptr);
-
+	mem->WriteVirtual(cr3, reinterpret_cast<uint64_t>(pTargetBase), pSrcData, 0x1000);
+	
 	delete[] pSrcData;
+
+	printf("map sections successful\n");
 
 	void * pShellcode = VirtualAllocEx(hProc, nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 	if (!pShellcode)
@@ -119,8 +135,8 @@ bool ManualMap(HANDLE hProc, const char* szDllFile)
 		return false;
 	}
 
-	WriteProcessMemory(hProc, pShellcode, Shellcode, 0x1000, nullptr);
-	
+	mem->WriteVirtual(cr3, reinterpret_cast<uint64_t>(pShellcode), Shellcode, 0x1000);
+	printf("mem alloc for shellcode successful\n");
 
 	HANDLE hThread = CreateRemoteThread(hProc, nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(pShellcode),pTargetBase,0,nullptr);
 
@@ -131,16 +147,19 @@ bool ManualMap(HANDLE hProc, const char* szDllFile)
 		return false;
 	}
 
+	printf("Thread Creation successful : %x\n", hThread);
+
 	CloseHandle(hThread);
 
 	HINSTANCE hCheck = NULL;
 	while (!hCheck)
 	{
 		MANUAL_MAPPING_DATA data_checked{ 0 };
-		ReadProcessMemory(hProc, pTargetBase, &data_checked, sizeof(data_checked), nullptr);
+		mem->ReadVirtual(cr3, reinterpret_cast<uint64_t>(pTargetBase), &data_checked, sizeof(data_checked));
 		hCheck = data_checked.hMod;
 		Sleep(10);
 	}
+	printf("mapped Data Checked");
 
 	VirtualFreeEx(hProc, pShellcode, 0, MEM_RELEASE);
 
